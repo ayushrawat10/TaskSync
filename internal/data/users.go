@@ -2,69 +2,171 @@ package data
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"tasksync/internal/validator"
 	"time"
-    "fmt"
 
-	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"golang.org/x/crypto/bcrypt"
+)
+
+var (
+	ErrDuplicateEmail = errors.New("duplicate email")
 )
 
 type User struct {
-    ID primitive.ObjectID `json:"id" bson:"_id,omitempty"`
-    CreatedAt time.Time `bson:"created_at"`
-    Name string `json:"name" bson:"name"`
-    Email string `json:"email" bson:"email"`
-    Password string `json:"password" bson:"password"`
-    Version int32 `json:"version" bson:"version"`
+	ID        primitive.ObjectID `json:"id" bson:"_id,omitempty"`
+	CreatedAt time.Time          `bson:"created_at"`
+	Name      string             `json:"name" bson:"name"`
+	Email     string             `json:"email" bson:"email"`
+	Password  password           `json:"-" bson:"password"`
+	Activated bool               `json:"activated" bson:"activated"`
+	Version   int32              `json:"version" bson:"version"`
+}
+
+type password struct {
+	plaintext *string `bson:"-"`
+	hashed    []byte `bson:"password"`
+}
+
+func (p *password) Set(plaintext string) error {
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(plaintext), 12)
+	if err != nil {
+		return err
+	}
+	p.plaintext = &plaintext
+	p.hashed = hashedBytes
+	return nil
+}
+
+func (p *password) Matches(plaintext string) (bool, error) {
+	err := bcrypt.CompareHashAndPassword(p.hashed, []byte(plaintext))
+	if err != nil {
+		switch {
+		case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
+			return false, nil
+		default:
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func ValidateEmail(v *validator.Validator, email string) {
+	v.Check(email != "", "email", "must be provided")
+	v.Check(validator.Matches(email, validator.EmailRX), "email", "must be a valid email address")
+}
+
+func ValidatePasswordPlaintext(v *validator.Validator, password string) {
+	v.Check(password != "", "password", "must be provided")
+	v.Check(len(password) >= 8, "password", "must be at least 8 bytes long")
+	v.Check(len(password) <= 72, "password", "must not be more than 72 bytes long")
 }
 
 func ValidateUser(v *validator.Validator, user *User) {
-    v.Check(user.Name != "", "name", "must be provided")
-    v.Check(len(user.Name) <= 100, "name", "must not be more than 100 bytes long")
-    v.Check(user.Email != "", "email", "must be provided")
-    v.Check(len(user.Email) <= 100, "email", "must not be more than 100 bytes long")
-    v.Check(user.Password != "", "password", "must be provided")
-    v.Check(len(user.Password) >= 8, "password", "must be at least 8 bytes long")
-    v.Check(len(user.Password) <= 72, "password", "must not be more than 72 bytes long")
-    v.Check(user.Password != user.Name, "password", "must not be the same as name")
+	v.Check(user.Name != "", "name", "must be provided")
+	v.Check(len(user.Name) <= 500, "name", "must not be more than 500 bytes long")
+	ValidateEmail(v, user.Email)
+	if user.Password.plaintext != nil {
+		ValidatePasswordPlaintext(v, *user.Password.plaintext)
+	}
+	if user.Password.hashed == nil {
+		panic("missing password hash for user")
+	}
 }
 
 type UserModel struct {
-    DB *mongo.Collection
+	DB *mongo.Collection
 }
 
 func (m UserModel) Insert(user *User) error {
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-    user.CreatedAt = time.Now()
-    user.Version = 1
+	user.CreatedAt = time.Now()
+	user.Version = 1
 
-    result, err := m.DB.InsertOne(ctx, user)
+	result, err := m.DB.InsertOne(ctx, user)
     if err != nil {
-        return err
-    }
-    oid, ok := result.InsertedID.(primitive.ObjectID)
-    if !ok {
-        return fmt.Errorf("could not convert to ObjectID")
-    }
-    user.ID = oid
-    return nil
-}
+		if we, ok := err.(mongo.WriteException); ok {
+			for _, e := range we.WriteErrors {
+				if e.Code == 11000 {
+					return ErrDuplicateEmail
+                }
+			}
+		}
+		return err
+	}
 
-func (m UserModel) Get(id int64) (*User, error) {
-    return nil, nil
+	oid, ok := result.InsertedID.(primitive.ObjectID)
+	if !ok {
+		return fmt.Errorf("could not convert to ObjectID")
+	}
+	user.ID = oid
+	return nil
 }
 
 func (m UserModel) GetByEmail(email string) (*User, error) {
-    return nil, nil
+	var user User
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	filter := bson.M{"email": email}
+	err := m.DB.FindOne(ctx, filter).Decode(&user)
+	if err != nil {
+		switch {
+		case errors.Is(err, mongo.ErrNoDocuments):
+			return nil, ErrRecordNotFound
+		default:
+			return nil, err
+		}
+	}
+	return &user, nil
 }
 
 func (m UserModel) Update(user *User) error {
-    return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if user.Name == "" || *user.Password.plaintext == "" {
+		return errors.New("name and password must be provided")
+	}
+
+	filter := bson.M{
+		"_id": user.ID,
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"name":     user.Name,
+			"password": user.Password,
+			"version":  user.Version + 1,
+		},
+	}
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
+
+	result := m.DB.FindOneAndUpdate(ctx, filter, update, opts)
+	if result.Err() != nil {
+		if errors.Is(result.Err(), mongo.ErrNoDocuments) {
+			return fmt.Errorf("edit conflict")
+		}
+		return result.Err()
+	}
+
+	var updatedUser User
+	err := result.Decode(&updatedUser)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (m UserModel) Delete(id int64) error {
-    return nil
+	return nil
 }
