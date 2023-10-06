@@ -13,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
     "tasksync/internal/data"
     "tasksync/internal/jsonlog"
+    "tasksync/internal/mailer"
 )
 
 const version = "1.0.0"
@@ -32,12 +33,20 @@ type config struct {
         burst  int
         enabled bool
     }
+    smtp struct {
+        host string
+        port int
+        username string
+        password string
+        sender string
+    }
 }
 
 type application struct {
     config config
     logger *jsonlog.Logger
     models data.Models
+    mailer mailer.Mailer
 }
 
 func main() {
@@ -86,10 +95,38 @@ func main() {
     }()
     logger.PrintInfo("Database connection pool established", nil)
 
+    cfg.smtp.host = os.Getenv("SMTP_HOST")
+    if cfg.smtp.host == "" {
+        cfg.smtp.host = "smtp.mailtrap.io"  // default value
+    }
+
+    cfg.smtp.port, err = strconv.Atoi(os.Getenv("SMTP_PORT"))
+    if err != nil || cfg.smtp.port == 0 {
+        cfg.smtp.port = 25  // default value
+    }
+
+    cfg.smtp.username = os.Getenv("SMTP_USERNAME")
+    if cfg.smtp.username == "" {
+        cfg.smtp.username = "0abf276416b183"  // default value
+    }
+
+    cfg.smtp.password = os.Getenv("SMTP_PASSWORD")
+    if cfg.smtp.password == "" {
+        cfg.smtp.password = "d8672aa2264bb5"  // default value
+    }
+
+    cfg.smtp.sender = os.Getenv("SMTP_SENDER")
+    if cfg.smtp.sender == "" {
+        cfg.smtp.sender = "Greenlight <no-reply@greenlight.alexedwards.net>"  // default value
+    }
+    log.Println(cfg.smtp.sender)
+    log.Println(cfg.smtp.port)
+
     app := &application{
         config: cfg,
         logger: logger,
         models: data.NewModels(db.Database("tasksync")),
+        mailer: mailer.New(cfg.smtp.host, cfg.smtp.port, cfg.smtp.username, cfg.smtp.password, cfg.smtp.sender),
     }
 
     err = app.serve()
