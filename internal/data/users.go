@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+    "crypto/sha256"
 	"errors"
 	"fmt"
 	"tasksync/internal/validator"
@@ -129,13 +130,28 @@ func (m UserModel) GetByEmail(email string) (*User, error) {
 	return &user, nil
 }
 
+func (m UserModel) GetByID(id primitive.ObjectID) (*User, error) {
+    var user User
+
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    filter := bson.M{"_id": id}
+    err := m.DB.FindOne(ctx, filter).Decode(&user)
+    if err != nil {
+        switch {
+        case errors.Is(err, mongo.ErrNoDocuments):
+            return nil, ErrRecordNotFound
+        default:
+            return nil, err
+        }
+    }
+    return &user, nil
+}
+
 func (m UserModel) Update(user *User) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	if user.Name == "" || *user.Password.plaintext == "" {
-		return errors.New("name and password must be provided")
-	}
 
 	filter := bson.M{
 		"_id": user.ID,
@@ -146,6 +162,7 @@ func (m UserModel) Update(user *User) error {
 			"name":     user.Name,
 			"password": user.Password,
 			"version":  user.Version + 1,
+            "activated": user.Activated,
 		},
 	}
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
@@ -169,4 +186,30 @@ func (m UserModel) Update(user *User) error {
 
 func (m UserModel) Delete(id int64) error {
 	return nil
+}
+
+func (m TokenModel) GetForToken(tokenScope, tokenPlaintext string) (primitive.ObjectID, error) {
+    tokenHash := sha256.Sum256([]byte(tokenPlaintext))
+
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    filter := bson.M{
+        "hashedToken": tokenHash[:],
+        "scope": tokenScope,
+        "expiry": bson.M{"$gt": time.Now()},
+    }
+
+    var token Token
+    err := m.DB.FindOne(ctx, filter).Decode(&token)
+    if err != nil {
+        switch {
+        case errors.Is(err, mongo.ErrNoDocuments):
+            return primitive.NilObjectID, ErrRecordNotFound
+        default:
+            return primitive.NilObjectID, err
+        }
+    }
+
+    return token.UserID, nil
 }

@@ -5,7 +5,13 @@ Hi,
 
 Thank you for signing up for a TaskSync account. We're excited to have you on board!
 
-To get started, please click the link below to verify your email address:
+Please send a request to the `PUT /v1/users/activated` endpoint with the following JSON body to activate your account:
+
+{"token": "{{.activationToken}}"}
+
+Please note that this token will expire in 24 hours.
+
+Thanks,
 
 The TaskSync Team
 {{end}}
@@ -21,7 +27,13 @@ The TaskSync Team
 <body>
     <p>Hi,</p>
     <p>Thank you for signing up for a TaskSync account. We're excited to have you on board!</p>
-    <p>To get started, please click the link below to verify your email address:</p>
+    <p>Please send a request to the <code>PUT /v1/users/activated</code> endpoint with the following JSON body to activate your account:</p>
+    <pre><code>
+    {"token": "{{.activationToken}}"}
+    </code></pre>
+    <p>Please note that this token will expire in 24 hours.</p>
+    <p>Thanks,</p>
+
     <p>The TaskSync Team</p>
 </body>
 </html>
