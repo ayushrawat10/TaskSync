@@ -6,6 +6,7 @@ import (
     "strconv"
 	"log"
 	"os"
+    "sync"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -47,6 +48,7 @@ type application struct {
     logger *jsonlog.Logger
     models data.Models
     mailer mailer.Mailer
+    wg sync.WaitGroup
 }
 
 func main() {
@@ -119,8 +121,6 @@ func main() {
     if cfg.smtp.sender == "" {
         cfg.smtp.sender = "Greenlight <no-reply@greenlight.alexedwards.net>"  // default value
     }
-    log.Println(cfg.smtp.sender)
-    log.Println(cfg.smtp.port)
 
     app := &application{
         config: cfg,
