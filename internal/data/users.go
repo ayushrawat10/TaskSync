@@ -24,28 +24,23 @@ type User struct {
 	CreatedAt time.Time          `bson:"created_at"`
 	Name      string             `json:"name" bson:"name"`
 	Email     string             `json:"email" bson:"email"`
-	Password  password           `json:"-" bson:"password"`
+	Password  []byte             `json:"-" bson:"password"`
 	Activated bool               `json:"activated" bson:"activated"`
 	Version   int32              `json:"version" bson:"version"`
 }
 
-type password struct {
-	plaintext *string `bson:"-"`
-	hashed    []byte `bson:"password"`
-}
 
-func (p *password) Set(plaintext string) error {
+func (user *User) SetPassword(plaintext string) error {
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(plaintext), 12)
 	if err != nil {
 		return err
 	}
-	p.plaintext = &plaintext
-	p.hashed = hashedBytes
+	user.Password = hashedBytes
 	return nil
 }
 
-func (p *password) Matches(plaintext string) (bool, error) {
-	err := bcrypt.CompareHashAndPassword(p.hashed, []byte(plaintext))
+func (user *User) PasswordMatches(plaintext string) (bool, error) {
+	err := bcrypt.CompareHashAndPassword(user.Password, []byte(plaintext))
 	if err != nil {
 		switch {
 		case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
@@ -72,10 +67,7 @@ func ValidateUser(v *validator.Validator, user *User) {
 	v.Check(user.Name != "", "name", "must be provided")
 	v.Check(len(user.Name) <= 500, "name", "must not be more than 500 bytes long")
 	ValidateEmail(v, user.Email)
-	if user.Password.plaintext != nil {
-		ValidatePasswordPlaintext(v, *user.Password.plaintext)
-	}
-	if user.Password.hashed == nil {
+	if user.Password == nil {
 		panic("missing password hash for user")
 	}
 }

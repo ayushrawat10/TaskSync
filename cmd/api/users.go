@@ -35,7 +35,7 @@ func (app *application) registerUserHandler(w http.ResponseWriter, r *http.Reque
 		Activated: false,
 	}
 
-	err = user.Password.Set(input.Password)
+	err = user.SetPassword(input.Password)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 		return

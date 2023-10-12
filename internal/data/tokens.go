@@ -15,14 +15,15 @@ import (
 
 const (
     ScopeActivation = "activation"
+    ScopeAuthentication = "authentication"
 )
 
 type Token struct {
-    PlainToken string `bson:"-"` 
-    HashedToken []byte `bson:"hashedToken"`
-    UserID primitive.ObjectID `bson:"userID"`
-    Expiry time.Time `bson:"expiry"`
-    Scope string `bson:"scope"`
+    PlainToken string `json:"token" bson:"-"` 
+    HashedToken []byte `json:"-" bson:"hashedToken"`
+    UserID primitive.ObjectID `json:"-" bson:"userID"`
+    Expiry time.Time `json:"expiry" bson:"expiry"`
+    Scope string `json:"-" bson:"scope"`
 }
 
 func generateToken(userID primitive.ObjectID, ttl time.Duration, scope string) (*Token, error) {
